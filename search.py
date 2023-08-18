@@ -5,10 +5,10 @@ import pandas as pd
 
 from rank_bm25 import BM25Okapi as BM25
 import gensim
-from gensim import corpora
 import gensim.downloader as api
 import numpy as np
 import logging
+
 logging.basicConfig(level=logging.DEBUG)
 
 
@@ -45,15 +45,16 @@ class Ranker(object):
         mean_embedding = self._create_mean_embedding(word_embeddings)
         max_embedding = self._create_max_embedding(word_embeddings)
         embedding = np.concatenate([mean_embedding, max_embedding])
-        unit_embedding = embedding / (embedding**2).sum()**0.5
+        unit_embedding = embedding / (embedding ** 2).sum() ** 0.5
         return unit_embedding
 
     def rank(self, tokenized_query, tokenized_documents):
         """
         Re-ranks a set of documents according to embedding distance
         """
-        query_embedding = self._embed(tokenized_query, self.query_embedding) # (E,)
-        document_embeddings = np.array([self._embed(document, self.document_embedding) for document in tokenized_documents]) # (N, E)
+        query_embedding = self._embed(tokenized_query, self.query_embedding)  # (E,)
+        document_embeddings = np.array(
+            [self._embed(document, self.document_embedding) for document in tokenized_documents])  # (N, E)
         scores = document_embeddings.dot(query_embedding)
         index_rankings = np.argsort(scores)[::-1]
         return index_rankings, np.sort(scores)[::-1]
@@ -66,7 +67,8 @@ class TSVDocumentReader(object):
     @property
     def corpus(self):
         df = pd.read_csv(self.path, delimiter="\t", header=None)
-        return df[3].values.tolist()
+        return df[0].values.tolist()
+
 
 class DocumentReader(object):
     def __init__(self, path):
@@ -88,67 +90,49 @@ def tokenize(document):
 
 
 def show_scores(documents, scores, n=10):
-    for i in range(n):
+    for i in range(min(n, len(scores))):
         print("======== RANK: {} | SCORE: {} =======".format(i + 1, scores[i]))
         print(documents[i])
-        print("")
     print("\n")
 
-@click.command()
-@click.option("--path", prompt="Path to document TSV", help="Document TSV")
-@click.option("--query", prompt="Search query", help="Search query")
-def main(path, query):
-    print('Query: "{}"'.format(query))
 
-    print("Reading documents...", end="")
-    reader = TSVDocumentReader(path)
+@click.command()
+@click.option("--query", prompt="Search query", help="Search query")
+def main(query):
+    tokenized_query = tokenize(query)
+
+    print("Reading documents.tsv...", end="")
+    reader = TSVDocumentReader("documents.tsv")
     documents = [doc for doc in reader.corpus]
     print(" [DONE]")
+    print("")
+
     print("Tokening documents...", end="")
     corpus = [list(gensim.utils.tokenize(doc.lower())) for doc in documents]
-    tokenized_query = tokenize(query)
     print(" [DONE]")
-    
+    print("")
+
     retriever = Retriever(corpus)
     retrieval_indexes, retrieval_scores = retriever.query(tokenized_query)
-
     retrieved_documents = [documents[idx] for idx in retrieval_indexes]
     print("======== BM25 ========")
+    print('Query: "{}"'.format(query))
     show_scores(retrieved_documents, retrieval_scores, 20)
-
-    tokenzed_retrieved_documents = [corpus[idx] for idx in retrieval_indexes]
 
     print("Loading glove embeddings...", end="")
     query_embedding = api.load('glove-wiki-gigaword-50')
     print(" [DONE]")
+    print("")
+
     ranker = Ranker(query_embedding=query_embedding, document_embedding=query_embedding)
+    tokenzed_retrieved_documents = [corpus[idx] for idx in retrieval_indexes]
     ranker_indexes, ranker_scores = ranker.rank(tokenized_query, tokenzed_retrieved_documents)
     reranked_documents = [retrieved_documents[idx] for idx in ranker_indexes]
 
     print("======== Embedding ========")
+    print('Query: "{}"'.format(query))
     show_scores(reranked_documents, ranker_scores, 20)
 
-    print("======== Samples ========")
-    documents = [
-        "An investment bonanza is coming",
-        "Who governs a country's airspace?",
-        "What is a supermoon, and how noticeable is it to the naked eye?",
-        "What the evidence says about police body-cameras",
-        "Who controls Syria?",
-    ]
-    corpus = [list(gensim.utils.tokenize(doc.lower())) for doc in documents]
-    queries = [
-        "banking",
-        "astrology",
-        "middle east",
-    ]
-    for query in queries:
-        tokenized_query = tokenize(query)
-        indexes, scores = ranker.rank(tokenized_query, corpus)
-        print(query)
-        for rank, index in enumerate(indexes):
-            document = documents[index]
-            print("Rank: {} | Top Article: {}".format(rank, document))
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,5 @@
+﻿click
+pandas
+rank_bm25
+gensim
+numpy
